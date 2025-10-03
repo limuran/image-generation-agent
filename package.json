@@ -1,7 +1,7 @@
 {
     "name": "image-generation-agent",
     "version": "1.0.0",
-    "description": "图像生成Agent - 基于Mastra和Moonshot Kimi",
+    "description": "图像生成Agent - 基于Mastra和Moonshot Kimi，集成多个图像生成模型",
     "main": "dist/index.js",
     "type": "module",
     "scripts": {
@@ -9,13 +9,19 @@
         "build": "tsc && wrangler deploy --dry-run",
         "deploy": "wrangler deploy",
         "deploy:r2": "wrangler r2 bucket create image-agent-storage",
-        "test": "echo \"Error: no test specified\" && exit 1"
+        "deploy:secrets": "echo '请运行: wrangler secret put MOONSHOT_API_KEY && wrangler secret put OPENAI_API_KEY && wrangler secret put STABILITY_API_KEY'",
+        "test:api": "node test/api-test.js",
+        "logs": "wrangler tail"
     },
     "keywords": [
         "ai",
         "agent",
         "image-generation",
         "mastra",
+        "moonshot",
+        "kimi",
+        "dall-e",
+        "stable-diffusion",
         "cloudflare"
     ],
     "author": "",
@@ -24,6 +30,7 @@
         "@mastra/core": "^0.16.2",
         "@ai-sdk/openai": "^1.0.0",
         "hono": "^4.0.0",
+        "openai": "^4.20.0",
         "zod": "^3.23.0"
     },
     "devDependencies": {
@@ -31,5 +38,9 @@
         "@types/node": "^20.0.0",
         "typescript": "^5.3.0",
         "wrangler": "^3.80.0"
+    },
+    "engines": {
+        "node": ">=18.0.0",
+        "npm": ">=9.0.0"
     }
 }
