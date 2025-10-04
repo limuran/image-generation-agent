@@ -50,3 +50,4 @@ coverage/
 
 # R2 lifecycle config (if you want to keep it private)
 # r2-lifecycle.json
+.env
