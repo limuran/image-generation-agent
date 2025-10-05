@@ -1,0 +1,39 @@
+{
+  "name": "image-generation-agent",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "mastra start",
+    "dev": "mastra dev",
+    "build": "tsc && wrangler deploy --dry-run",
+    "deploy": "wrangler deploy",
+    "deploy:r2": "wrangler r2 bucket create image-agent-storage",
+    "deploy:secrets": "echo '请运行: wrangler secret put MOONSHOT_API_KEY && wrangler secret put OPENAI_API_KEY && wrangler secret put STABILITY_API_KEY'",
+    "test:api": "node test/api-test.js",
+    "logs": "wrangler tail"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "type": "module",
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^2.0.42",
+    "@cloudflare/workers-types": "^4.20251004.0",
+    "@mastra/core": "^0.20.0",
+    "@mastra/deployer-cloudflare": "^0.14.5",
+    "@mastra/libsql": "^0.15.1",
+    "@mastra/loggers": "^0.10.15",
+    "@mastra/memory": "^0.15.5",
+    "openai": "^4.20.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.2",
+    "mastra": "^0.14.1",
+    "typescript": "^5.9.3"
+  }
+}
