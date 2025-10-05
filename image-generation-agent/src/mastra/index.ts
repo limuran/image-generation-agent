@@ -1,15 +1,17 @@
+
 import { Mastra } from '@mastra/core/mastra';
 import { PinoLogger } from '@mastra/loggers';
 import { LibSQLStore } from '@mastra/libsql';
+import { weatherWorkflow } from './workflows/weather-workflow';
+import { weatherAgent } from './agents/weather-agent';
 import { imageGenerationAgent } from './agents/image-agent';
 import { routes } from '../api/routes';
 
 export const mastra = new Mastra({
-  agents: { 
-    imageGenerationAgent 
-  },
+  workflows: { weatherWorkflow },
+  agents: { weatherAgent,imageGenerationAgent },
   storage: new LibSQLStore({
-    // 使用内存存储，如需持久化改为 file:../mastra.db
+    // stores telemetry, evals, ... into memory storage, if it needs to persist, change to file:../mastra.db
     url: ":memory:",
   }),
   logger: new PinoLogger({
@@ -23,5 +25,3 @@ export const mastra = new Mastra({
     apiRoutes: routes,
   },
 });
-
-export default mastra;

@@ -1,15 +1,9 @@
-// import { openai } from '@ai-sdk/openai';
+import { openai } from '@ai-sdk/openai';
 import { Agent } from '@mastra/core/agent';
 import { Memory } from '@mastra/memory';
 import { LibSQLStore } from '@mastra/libsql';
 import { weatherTool } from '../tools/weather-tool';
-import { createOpenAI } from '@ai-sdk/openai';
 
-// 配置Moonshot Kimi - 使用OpenAI兼容API
-const moonshotProvider = createOpenAI({
-  apiKey: process.env.MOONSHOT_API_KEY || '',
-  baseURL: 'https://api.moonshot.cn/v1',
-});
 export const weatherAgent = new Agent({
   name: 'Weather Agent',
   instructions: `
@@ -26,7 +20,7 @@ export const weatherAgent = new Agent({
 
       Use the weatherTool to fetch current weather data.
 `,
-  model: moonshotProvider('kimi-k2-turbo-preview'),
+  model: openai('gpt-4o-mini'),
   tools: { weatherTool },
   memory: new Memory({
     storage: new LibSQLStore({
