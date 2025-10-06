@@ -44,7 +44,7 @@ export const imageGenerationAgent = new Agent({
 记住：优秀的prompt是高质量图像的关键！`,
 
   // 使用 Mastra 支持的默认文本模型生成和优化提示词
-  model: 'gpt-4o-mini',
+  model: 'openai/gpt-4o-mini',
 
   tools: {
     smartImageRouterTool,

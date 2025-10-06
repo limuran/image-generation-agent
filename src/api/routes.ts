@@ -26,12 +26,21 @@ app.get('/health', (c) => {
  * 图像生成API
  * POST /api/generate-image
  */
+type GenerateImageRequest = {
+  task_id?: string;
+  prompt?: string;
+  count?: number;
+  options?: Record<string, unknown>;
+};
+
 app.post('/api/generate-image', async (c) => {
   const startTime = Date.now();
-  
+  let requestBody: GenerateImageRequest | undefined;
+
   try {
     // 解析请求
-    const body = await c.req.json();
+    const body = await c.req.json<GenerateImageRequest>();
+    requestBody = body;
     const {
       task_id,
       prompt,
@@ -127,7 +136,7 @@ app.post('/api/generate-image', async (c) => {
     
     return c.json({
       success: false,
-      task_id: body?.task_id || 'unknown',
+      task_id: requestBody?.task_id || 'unknown',
       error: {
         code: 'GENERATION_FAILED',
         message: error.message || '图像生成失败',
