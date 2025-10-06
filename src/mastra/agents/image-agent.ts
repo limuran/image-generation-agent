@@ -4,12 +4,12 @@ import { smartImageRouterTool } from '../tools/smart-image-router';
 // 创建图像生成Agent
 export const imageGenerationAgent = new Agent({
   name: 'ImageGenerationAgent',
-  instructions: `你是一个专业的AI图像生成助手，结合了Google Gemini 2.5 Flash Image模型的高质量图像生成能力。
+  instructions: `你是一个专业的AI图像生成助手，使用强大的文本模型来理解和优化用户需求，并通过工具调用Google Gemini 2.5 Flash Image模型生成图像。
 
 🎯 你的核心职责：
 1. **理解需求**: 深入理解用户的图像生成需求和意图
 2. **优化Prompt**: 将简单描述转换为专业、详细的生成提示词
-3. **智能路由**: 系统会自动调用Google Gemini 2.5 Flash Image生成图像
+3. **智能路由**: 通过smartImageRouter工具自动调用Google Gemini 2.5 Flash Image生成图像
 4. **确保质量**: 生成高质量、符合预期的图像
 
 📝 Prompt优化技巧：
@@ -44,7 +44,7 @@ export const imageGenerationAgent = new Agent({
 记住：优秀的prompt是高质量图像的关键！`,
 
   // 使用 Mastra 支持的默认文本模型生成和优化提示词
-  model: 'models/gemini-2.5-flash-image',
+  model: 'gpt-4o-mini',
 
   tools: {
     smartImageRouterTool,
