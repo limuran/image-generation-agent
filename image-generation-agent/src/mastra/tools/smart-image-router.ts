@@ -5,8 +5,7 @@ import { GoogleGenAI } from '@google/genai';
 const GOOGLE_GEMINI_IMAGE_MODEL = 'models/gemini-2.5-flash-image';
 const MAX_IMAGES_PER_REQUEST = 4;
 
-const googleApiKey =
-  process.env.GOOGLE_API_KEY ;
+const googleApiKey = process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENAI_API_KEY;
 
 const geminiImageClient = new GoogleGenAI({
   apiKey: googleApiKey || undefined,
@@ -39,7 +38,7 @@ const extractErrorMessage = (error: unknown): string => {
 export const smartImageRouterTool = createTool({
   id: 'smart-image-router',
   description:
-    '使用 Google Gemini 2.5 Flash Image 自动生成高质量图像，支持根据请求数量批量生成并返回 base64 数据 URL',
+    '使用 Google Gemini 2.5 Flash Image 自动生成高质量图像，支持根据请求数量批量生成并返回可访问的图片链接',
 
   inputSchema: z.object({
     optimized_prompt: z.string().describe('已经优化过的高质量prompt'),
@@ -63,9 +62,14 @@ export const smartImageRouterTool = createTool({
       .describe('保持向后兼容，目前仅支持Google Gemini图像模型'),
   }),
   outputSchema: z.object({
-     images: z.array(
+    images: z.array(
       z.object({
-        url: z.string().describe('图片URL或base64'),
+        uri: z.string().optional().describe('图片的直接访问链接'),
+        base64: z.string().optional().describe('图片的base64数据（用于后续存储或缓存）'),
+        mime_type: z
+          .string()
+          .default('image/png')
+          .describe('图片的MIME类型'),
         model_used: z.string().describe('使用的模型'),
         revised_prompt: z.string().optional().describe('模型修订后的prompt'),
       }),
@@ -81,7 +85,13 @@ export const smartImageRouterTool = createTool({
     }
 
     const startTime = Date.now();
-    const images: Array<{ url: string; model_used: string; revised_prompt?: string }> = [];
+    const images: Array<{
+      uri?: string;
+      base64?: string;
+      mime_type: string;
+      model_used: string;
+      revised_prompt?: string;
+    }> = [];
      const targetCount = Math.min(count, MAX_IMAGES_PER_REQUEST);
     const aspectRatio = aspectRatioMap[size];
     try {
@@ -97,12 +107,23 @@ export const smartImageRouterTool = createTool({
 
       for (const generatedImage of response.generatedImages ?? []) {
         const imagePayload = generatedImage.image;
-        if (!imagePayload?.imageBytes) {
+        if (!imagePayload) {
           continue;
         }
-         const mimeType = imagePayload.mimeType || 'image/png';
+
+        const mimeType = imagePayload.mimeType || 'image/png';
+        const base64 = imagePayload.imageBytes;
+        const uri = (imagePayload as { uri?: string; contentUri?: string }).uri ||
+          (imagePayload as { uri?: string; contentUri?: string }).contentUri;
+
+        if (!base64 && !uri) {
+          continue;
+        }
+
         images.push({
-          url: `data:${mimeType};base64,${imagePayload.imageBytes}`,
+          uri: uri || undefined,
+          base64: base64 || undefined,
+          mime_type: mimeType,
           model_used: GOOGLE_GEMINI_IMAGE_MODEL,
         });
       }

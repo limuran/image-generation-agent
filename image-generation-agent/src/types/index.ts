@@ -62,7 +62,9 @@ export interface GenerateImageResponse {
  * 生成的图片信息
  */
 export interface GeneratedImage {
-  url: string;
+  uri?: string;
+  base64?: string;
+  mime_type: string;
   model_used: string;
   revised_prompt?: string;
 }
