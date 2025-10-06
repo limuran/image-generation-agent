@@ -1,24 +1,24 @@
 import { Agent } from '@mastra/core/agent';
-import { createOpenAI } from '@ai-sdk/openai';
+// import { createOpenAI } from '@ai-sdk/openai';
 import { smartImageRouterTool } from '../tools/smart-image-router';
 import { Memory } from '@mastra/memory';
 import { LibSQLStore } from '@mastra/libsql';
 
 // 配置Moonshot Kimi - 使用OpenAI兼容API
-const moonshotProvider = createOpenAI({
-  apiKey: process.env.MOONSHOT_API_KEY || '',
-  baseURL: 'https://api.moonshot.cn/v1',
-});
+// const moonshotProvider = createOpenAI({
+//   apiKey: process.env.MOONSHOT_API_KEY || '',
+//   baseURL: 'https://api.moonshot.cn/v1',
+// });
 
 // 创建图像生成Agent
 export const imageGenerationAgent = new Agent({
   name: 'ImageGenerationAgent',
-  instructions: `你是一个专业的AI图像生成助手，结合了Moonshot Kimi的理解能力和多个顶级图像生成模型。
+  instructions: `你是一个专业的AI图像生成助手，结合了Google Imagen 4的高质量图像生成能力。
 
 🎯 你的核心职责：
 1. **理解需求**: 深入理解用户的图像生成需求和意图
 2. **优化Prompt**: 将简单描述转换为专业、详细的生成提示词
-3. **智能路由**: 系统会自动选择最适合的图像生成模型（DALL-E 3或Stable Diffusion）
+3. **智能路由**: 系统会自动调用Google Imagen 4生成图像
 4. **确保质量**: 生成高质量、符合预期的图像
 
 📝 Prompt优化技巧：
@@ -52,8 +52,8 @@ export const imageGenerationAgent = new Agent({
 
 记住：优秀的prompt是高质量图像的关键！`,
 
-  model: moonshotProvider('kimi-k2-turbo-preview'),
-  
+  // 使用 Mastra 支持的默认文本模型生成和优化提示词
+  model: 'models/gemini-2.5-flash-image',
   tools: {
     smartImageRouterTool,
   },
