@@ -21,6 +21,7 @@
     "node": ">=20.9.0"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^2.0.42",
     "@cloudflare/workers-types": "^4.20251004.0",
     "@google/genai": "^1.22.0",
     "@mastra/core": "^0.20.0",
