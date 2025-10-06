@@ -1,7 +1,7 @@
 {
     "name": "image-generation-agent",
     "version": "1.0.0",
-    "description": "图像生成Agent - 基于Mastra和Moonshot Kimi，集成多个图像生成模型",
+    "description": "图像生成Agent - 基于Mastra和Google Gemini 2.5 Flash Image",
     "main": "dist/index.js",
     "type": "module",
     "scripts": {
@@ -9,7 +9,7 @@
         "build": "tsc && wrangler deploy --dry-run",
         "deploy": "wrangler deploy",
         "deploy:r2": "wrangler r2 bucket create image-agent-storage",
-        "deploy:secrets": "echo '请运行: wrangler secret put MOONSHOT_API_KEY && wrangler secret put OPENAI_API_KEY && wrangler secret put STABILITY_API_KEY'",
+        "deploy:secrets": "echo '请运行: wrangler secret put MOONSHOT_API_KEY && wrangler secret put GOOGLE_API_KEY'",
         "test:api": "node test/api-test.js",
         "logs": "wrangler tail"
     },
@@ -20,17 +20,15 @@
         "mastra",
         "moonshot",
         "kimi",
-        "dall-e",
-        "stable-diffusion",
-        "cloudflare"
+        "cloudflare",
+        "google-imagen"
     ],
     "author": "",
     "license": "MIT",
     "dependencies": {
-        "@ai-sdk/openai": "^1",
+        "@google/genai": "^0.5.0",
         "@mastra/core": "^0.20.0",
         "hono": "^4.0.0",
-        "openai": "^4.20.0",
         "zod": "^3"
     },
     "devDependencies": {
