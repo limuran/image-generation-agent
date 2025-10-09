@@ -1,101 +1,108 @@
-/**
- * Cloudflare R2 上传工具
- * 使用 AWS S3 SDK（R2 兼容 S3 API）
- */
-
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
+// R2 配置
+const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID;
+const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID;
+const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY;
+const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME;
+const R2_PUBLIC_DOMAIN = process.env.R2_PUBLIC_DOMAIN; // 可选：自定义域名
+
 /**
- * 创建 R2 客户端
+ * 检查 R2 是否已配置
+ */
+export function isR2Configured(): boolean {
+  return !!(
+    R2_ACCOUNT_ID &&
+    R2_ACCESS_KEY_ID &&
+    R2_SECRET_ACCESS_KEY &&
+    R2_BUCKET_NAME
+  );
+}
+
+/**
+ * 创建 S3 客户端连接到 R2
  */
 function createR2Client() {
-  const accountId = process.env.R2_ACCOUNT_ID;
-  const accessKeyId = process.env.R2_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
-
-  if (!accountId || !accessKeyId || !secretAccessKey) {
-    throw new Error('R2 配置不完整，请检查环境变量');
+  if (!isR2Configured()) {
+    throw new Error('R2 未配置：请设置 R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME');
   }
-
-  // R2 的 endpoint 格式
-  const endpoint = `https://${accountId}.r2.cloudflarestorage.com`;
 
   return new S3Client({
     region: 'auto',
-    endpoint: endpoint,
+    endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
     credentials: {
-      accessKeyId: accessKeyId,
-      secretAccessKey: secretAccessKey,
+      accessKeyId: R2_ACCESS_KEY_ID!,
+      secretAccessKey: R2_SECRET_ACCESS_KEY!,
     },
   });
 }
 
 /**
- * 生成 R2 存储路径
- */
-function generateR2Path(taskId: string, imageIndex: number): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  const timestamp = Date.now();
-  const randomHash = Math.random().toString(36).substring(2, 8);
-  
-  return `images/${year}/${month}/${day}/${taskId}_${imageIndex}_${timestamp}_${randomHash}.png`;
-}
-
-/**
- * 上传图片到 Cloudflare R2
+ * 上传图片到 R2
+ * @param base64Data Base64 编码的图片数据
+ * @param taskId 任务 ID
+ * @param index 图片索引
+ * @returns 上传结果
  */
 export async function uploadToR2(
   base64Data: string,
   taskId: string,
-  imageIndex: number
-): Promise<{ success: boolean; url: string; key: string; error?: string }> {
+  index: number
+): Promise<{
+  success: boolean;
+  url: string;
+  key: string;
+  error?: string;
+}> {
   try {
-    const bucketName = process.env.R2_BUCKET_NAME;
-    const publicUrl = process.env.R2_PUBLIC_URL;
-
-    if (!bucketName || !publicUrl) {
-      throw new Error('R2_BUCKET_NAME 或 R2_PUBLIC_URL 未配置');
+    if (!isR2Configured()) {
+      return {
+        success: false,
+        url: '',
+        key: '',
+        error: 'R2 未配置',
+      };
     }
 
-    // 创建 R2 客户端
-    const r2Client = createR2Client();
+    const s3Client = createR2Client();
+    const timestamp = Date.now();
+    const key = `images/${taskId}/${timestamp}_${index}.png`;
 
-    // 生成存储路径
-    const key = generateR2Path(taskId, imageIndex);
-
-    // 转换 base64 为 Buffer
+    // 将 base64 转换为 Buffer
     const imageBuffer = Buffer.from(base64Data, 'base64');
 
     // 上传到 R2
-    const command = new PutObjectCommand({
-      Bucket: bucketName,
-      Key: key,
-      Body: imageBuffer,
-      ContentType: 'image/png',
-      Metadata: {
-        taskId: taskId,
-        imageIndex: String(imageIndex),
-        uploadedAt: new Date().toISOString(),
-      },
-    });
+    await s3Client.send(
+      new PutObjectCommand({
+        Bucket: R2_BUCKET_NAME!,
+        Key: key,
+        Body: imageBuffer,
+        ContentType: 'image/png',
+        // 设置为公开可读（如果你的 bucket 允许）
+        // ACL: 'public-read', // R2 不支持 ACL，需要通过 bucket 设置
+      })
+    );
 
-    await r2Client.send(command);
+    // 生成公开 URL
+    // 方式1: 使用自定义域名（推荐）
+    if (R2_PUBLIC_DOMAIN) {
+      const publicUrl = `${R2_PUBLIC_DOMAIN}/${key}`;
+      return {
+        success: true,
+        url: publicUrl,
+        key,
+      };
+    }
 
-    // 生成公开访问 URL
-    const finalUrl = `${publicUrl}/${key}`;
-
-    console.log(`☁️  已上传到 R2: ${finalUrl}`);
-
+    // 方式2: 使用 R2.dev 域名（需要在 Cloudflare 控制台启用）
+    const r2DevUrl = `https://pub-${R2_ACCOUNT_ID}.r2.dev/${key}`;
     return {
       success: true,
-      url: finalUrl,
-      key: key,
+      url: r2DevUrl,
+      key,
     };
   } catch (error: any) {
-    console.error('❌ R2 上传失败:', error.message);
+    console.error('R2 上传失败:', error);
     return {
       success: false,
       url: '',
@@ -106,16 +113,20 @@ export async function uploadToR2(
 }
 
 /**
- * 检查 R2 是否已配置
+ * 批量上传图片到 R2
  */
-export function isR2Configured(): boolean {
-  return !!(
-    process.env.R2_ACCOUNT_ID &&
-    process.env.R2_ACCESS_KEY_ID &&
-    process.env.R2_SECRET_ACCESS_KEY &&
-    process.env.R2_BUCKET_NAME &&
-    process.env.R2_PUBLIC_URL
+export async function uploadMultipleToR2(
+  images: Array<{ base64Data: string; index: number }>,
+  taskId: string
+): Promise<Array<{
+  success: boolean;
+  url: string;
+  key: string;
+  error?: string;
+}>> {
+  const uploadPromises = images.map(({ base64Data, index }) =>
+    uploadToR2(base64Data, taskId, index)
   );
-}
 
-export default { uploadToR2, isR2Configured };
+  return Promise.all(uploadPromises);
+}

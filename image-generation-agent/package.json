@@ -4,16 +4,17 @@
   "main": "index.js",
   "description": "图像生成Agent - 基于Mastra和Google Gemini",
   "scripts": {
-    "start": "mastra start",
-    "dev": "mastra dev",
-    "build": "tsc && wrangler deploy --dry-run",
+    "dev": "wrangler dev workers/index.ts --port 8787",
+    "dev:mastra": "mastra dev",
+    "build": "tsc",
     "deploy": "wrangler deploy",
     "deploy:r2": "wrangler r2 bucket create image-agent-storage",
-    "deploy:secrets": "echo '请运行: wrangler secret put GOOGLE_API_KEY'",
+    "deploy:secrets": "echo '请依次运行:\nwrangler secret put GOOGLE_API_KEY\nwrangler secret put R2_ACCESS_KEY_ID\nwrangler secret put R2_SECRET_ACCESS_KEY\nwrangler secret put R2_ACCOUNT_ID'",
     "test:api": "node test/api-test.js",
-    "test:image": "node test-image-generation.js",
+    "test:r2": "node test/test-r2-upload.js",
     "logs": "wrangler tail",
-    "clean": "rm -rf output/*.png"
+    "clean": "rm -rf output/*.png",
+    "check:env": "node -e \"console.log('检查环境变量:'); ['GOOGLE_API_KEY', 'R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET_NAME', 'R2_PUBLIC_DOMAIN'].forEach(k => console.log(k + ':', process.env[k] ? '✓' : '✗'))\""
   },
   "keywords": [
     "gemini",
@@ -43,6 +44,7 @@
   "devDependencies": {
     "@types/node": "^24.6.2",
     "mastra": "^0.14.1",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "wrangler": "4.30.0"
   }
 }

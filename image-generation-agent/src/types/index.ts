@@ -51,6 +51,7 @@ export interface GenerateImageResponse {
     prompt: string;
     requested_count: number;
     actual_count: number;
+    model_used?: string;
   };
   error?: {
     code: string;

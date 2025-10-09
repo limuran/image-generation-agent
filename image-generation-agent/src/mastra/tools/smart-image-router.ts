@@ -218,7 +218,7 @@ export const smartImageRouterTool = createTool({
       
       // 提取更友好的错误信息
       let friendlyError = message;
-      let suggestions = [];
+      let suggestions:string[] = [];
       
       if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED') || message.includes('quota')) {
         friendlyError = 'Google API 配额已用完';
