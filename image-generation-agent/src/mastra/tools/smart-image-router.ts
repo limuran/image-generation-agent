@@ -1,125 +1,248 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { GoogleGenAI } from '@google/genai';
+import * as fs from 'fs';
+import * as path from 'path';
+import { uploadToR2, isR2Configured } from '../../utils/r2-uploader';
 
-const GOOGLE_GEMINI_IMAGE_MODEL = 'models/gemini-2.5-flash-image';
+const GOOGLE_GEMINI_IMAGE_MODEL = 'gemini-2.5-flash-image';
 const MAX_IMAGES_PER_REQUEST = 4;
 
-const googleApiKey =
-  process.env.GOOGLE_API_KEY ;
+// 使用官方方式初始化
+const ai = new GoogleGenAI({});
 
-const geminiImageClient = new GoogleGenAI({
-  apiKey: googleApiKey || undefined,
-});
+/**
+ * 确保本地输出目录存在（作为备份）
+ */
+function ensureOutputDirectory(): string {
+  const outputDir = path.join(process.cwd(), 'output');
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
+  }
+  return outputDir;
+}
 
-
-const aspectRatioMap: Record<'1024x1024' | '1024x1792' | '1792x1024', string> = {
-  '1024x1024': '1:1',
-  '1024x1792': '9:16',
-  '1792x1024': '16:9',
-};
+/**
+ * 保存图片到本地（备份）
+ */
+function saveImageToFile(base64Data: string, outputDir: string, index: number): string {
+  const timestamp = Date.now();
+  const fileName = `gemini_${timestamp}_${index}.png`;
+  const filePath = path.join(outputDir, fileName);
+  
+  const imageBuffer = Buffer.from(base64Data, 'base64');
+  fs.writeFileSync(filePath, imageBuffer);
+  
+  return filePath;
+}
 
 const extractErrorMessage = (error: unknown): string => {
-  if (!error) {
-    return '';
-  }
-  if (typeof error === 'string') {
-    return error;
-  }
-
-  if (error instanceof Error) {
-    return error.message;
-  }
+  if (!error) return '';
+  if (typeof error === 'string') return error;
+  if (error instanceof Error) return error.message;
   if (typeof error === 'object' && 'message' in (error as Record<string, unknown>)) {
     return String((error as Record<string, unknown>).message);
   }
-
   return String(error);
 };
+
 export const smartImageRouterTool = createTool({
   id: 'smart-image-router',
   description:
-    '使用 Google Gemini 2.5 Flash Image 自动生成高质量图像，支持根据请求数量批量生成并返回 base64 数据 URL',
+    '使用 Google Gemini 2.5 Flash Image 生成高质量图像，自动上传到 Cloudflare R2，返回公开 URL',
 
   inputSchema: z.object({
     optimized_prompt: z.string().describe('已经优化过的高质量prompt'),
-       count: z
+    count: z
       .number()
       .min(1)
       .max(5)
       .default(1)
-      .describe('要生成的图片数量（最多一次返回4张，其余将通过多次请求生成）'),
+      .describe('要生成的图片数量'),
     size: z
       .enum(['1024x1024', '1024x1792', '1792x1024'])
       .default('1024x1024')
-      .describe('图片尺寸，将映射为Google Gemini支持的宽高比'),
+      .describe('图片尺寸'),
     quality: z
       .enum(['standard', 'hd'])
       .default('standard')
-      .describe('图片质量（当前Google Gemini图像API不支持该选项，将被忽略）'),
+      .describe('图片质量'),
     force_model: z
       .enum(['auto', 'google-gemini-image', 'google-imagen'])
       .default('auto')
-      .describe('保持向后兼容，目前仅支持Google Gemini图像模型'),
+      .describe('强制使用的模型'),
   }),
+  
   outputSchema: z.object({
-     images: z.array(
+    images: z.array(
       z.object({
-        url: z.string().describe('图片URL或base64'),
+        url: z.string().describe('图片的公开 URL（Cloudflare R2 或本地）'),
+        r2_key: z.string().optional().describe('R2 存储路径'),
+        local_path: z.string().describe('本地备份路径'),
+        file_name: z.string().describe('文件名'),
+        storage_type: z.enum(['r2', 'local']).describe('存储类型'),
         model_used: z.string().describe('使用的模型'),
-        revised_prompt: z.string().optional().describe('模型修订后的prompt'),
       }),
     ),
     total_count: z.number(),
     generation_time: z.number().describe('生成耗时（秒）'),
+    output_directory: z.string().describe('本地输出目录'),
   }),
+  
   execute: async ({ context }) => {
-     const { optimized_prompt, count, size } = context;
+    const { optimized_prompt, count, size } = context;
 
-    if (!googleApiKey) {
-      throw new Error('图像生成失败: 未配置 Google Gemini API Key (GOOGLE_API_KEY 或 GOOGLE_GENAI_API_KEY)');
+    if (!process.env.GOOGLE_API_KEY) {
+      throw new Error('图像生成失败: 未配置 GOOGLE_API_KEY 环境变量');
     }
 
     const startTime = Date.now();
-    const images: Array<{ url: string; model_used: string; revised_prompt?: string }> = [];
-     const targetCount = Math.min(count, MAX_IMAGES_PER_REQUEST);
-    const aspectRatio = aspectRatioMap[size];
+    const images: Array<{
+      url: string;
+      r2_key?: string;
+      local_path: string;
+      file_name: string;
+      storage_type: 'r2' | 'local';
+      model_used: string;
+    }> = [];
+    const targetCount = Math.min(count, MAX_IMAGES_PER_REQUEST);
+    const taskId = `task_${Date.now()}`;
+    
+    // 确保本地输出目录存在（作为备份）
+    const outputDir = ensureOutputDirectory();
+    
+    // 检查 R2 是否已配置
+    const hasR2 = isR2Configured();
+    
     try {
-     const response = await geminiImageClient.models.generateImages({
-        model: GOOGLE_GEMINI_IMAGE_MODEL,
-        prompt: optimized_prompt,
-        config: {
-          numberOfImages: targetCount,
-          aspectRatio,
-          outputMimeType: 'image/png',
-        },
-      });
-
-      for (const generatedImage of response.generatedImages ?? []) {
-        const imagePayload = generatedImage.image;
-        if (!imagePayload?.imageBytes) {
-          continue;
-        }
-         const mimeType = imagePayload.mimeType || 'image/png';
-        images.push({
-          url: `data:${mimeType};base64,${imagePayload.imageBytes}`,
-          model_used: GOOGLE_GEMINI_IMAGE_MODEL,
+      console.log(`🎨 开始生成图片...`);
+      console.log(`📝 Prompt: ${optimized_prompt}`);
+      console.log(`🔢 数量: ${targetCount}`);
+      console.log(`📐 尺寸: ${size}`);
+      console.log(`☁️  R2 状态: ${hasR2 ? '✅ 已配置，将上传到 R2' : '⚠️  未配置，使用本地存储'}`);
+      
+      // 根据 count 生成多次
+      for (let i = 0; i < targetCount; i++) {
+        console.log(`⏳ 正在生成第 ${i + 1}/${targetCount} 张图片...`);
+        
+        const response = await ai.models.generateContent({
+          model: GOOGLE_GEMINI_IMAGE_MODEL,
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: optimized_prompt }]
+            }
+          ],
         });
+
+        // 从 response.candidates 中提取图片数据
+        if (response.candidates && response.candidates.length > 0) {
+          for (const candidate of response.candidates) {
+            if (candidate.content && candidate.content.parts) {
+              for (const part of candidate.content.parts) {
+                if (part.inlineData && part.inlineData.data) {
+                  const imageData = part.inlineData.data;
+                  
+                  // 1. 保存到本地（备份）
+                  const localPath = saveImageToFile(imageData, outputDir, images.length + 1);
+                  const fileName = path.basename(localPath);
+                  console.log(`💾 本地备份: ${localPath}`);
+                  
+                  let finalUrl = localPath;
+                  let storageType: 'r2' | 'local' = 'local';
+                  let r2Key: string | undefined = undefined;
+                  
+                  // 2. 上传到 R2（如果配置了）
+                  if (hasR2) {
+                    console.log(`☁️  正在上传到 Cloudflare R2...`);
+                    const uploadResult = await uploadToR2(imageData, taskId, images.length + 1);
+                    
+                    if (uploadResult.success) {
+                      finalUrl = uploadResult.url;
+                      r2Key = uploadResult.key;
+                      storageType = 'r2';
+                      console.log(`✅ R2 上传成功!`);
+                      console.log(`🔗 公开 URL: ${finalUrl}`);
+                    } else {
+                      console.warn(`⚠️  R2 上传失败: ${uploadResult.error}`);
+                      console.warn(`⚠️  将使用本地路径`);
+                    }
+                  }
+                  
+                  images.push({
+                    url: finalUrl,
+                    r2_key: r2Key,
+                    local_path: localPath,
+                    file_name: fileName,
+                    storage_type: storageType,
+                    model_used: GOOGLE_GEMINI_IMAGE_MODEL,
+                  });
+                }
+              }
+            }
+          }
+        }
       }
 
       if (images.length === 0) {
-        throw new Error('未从Google Gemini图像模型获得任何图像');
+        throw new Error('未从 Gemini 获得任何图像数据');
       }
-       const generationTime = (Date.now() - startTime) / 1000;
-        return {
-          images,
-          total_count: images.length,
-          generation_time: generationTime,
-        };
-      } catch (error) {
+
+      const generationTime = (Date.now() - startTime) / 1000;
+      
+      console.log(`\n🎉 生成完成！`);
+      console.log(`📊 总数: ${images.length} 张`);
+      console.log(`⏱️  耗时: ${generationTime.toFixed(2)} 秒`);
+      console.log(`💾 存储: ${hasR2 ? 'Cloudflare R2 + 本地备份' : '本地'}`);
+      console.log(`📁 本地目录: ${outputDir}\n`);
+      
+      // 打印所有图片的 URL
+      images.forEach((img, idx) => {
+        console.log(`图片 ${idx + 1}:`);
+        console.log(`  🔗 URL: ${img.url}`);
+        if (img.r2_key) {
+          console.log(`  ☁️  R2 Key: ${img.r2_key}`);
+        }
+        console.log(`  💾 本地: ${img.local_path}\n`);
+      });
+      
+      return {
+        images,
+        total_count: images.length,
+        generation_time: generationTime,
+        output_directory: outputDir,
+      };
+    } catch (error) {
       const message = extractErrorMessage(error);
       console.error('❌ 图像生成失败:', message);
-      throw new Error(`图像生成失败: ${message}`);
+      
+      // 提取更友好的错误信息
+      let friendlyError = message;
+      let suggestions = [];
+      
+      if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED') || message.includes('quota')) {
+        friendlyError = 'Google API 配额已用完';
+        suggestions = [
+          '⏰ 等待配额重置',
+          '💳 已启用付费，请等待生效',
+          '🔑 使用另一个 API Key'
+        ];
+      } else if (message.includes('token') && message.includes('exceeds')) {
+        friendlyError = '对话历史过长';
+        suggestions = ['🔄 刷新页面开始新对话'];
+      } else if (message.includes('R2')) {
+        friendlyError = `R2 配置错误: ${message}`;
+        suggestions = [
+          '检查 .env 中的 R2 配置是否完整',
+          '确认 R2 API Token 权限正确',
+          '验证 R2_BUCKET_NAME 是否存在'
+        ];
+      }
+      
+      console.error('\n💡 建议：');
+      suggestions.forEach(s => console.error(`   ${s}`));
+      
+      throw new Error(JSON.stringify({ error: friendlyError, suggestions }));
     }
   },
 });
