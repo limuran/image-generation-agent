@@ -3,6 +3,15 @@ import { uploadMultipleImages, validateR2Config } from '../utils/r2-storage';
 import { smartImageRouterTool } from '../mastra/tools/smart-image-router';
 import type { GenerateImageRequest, GenerateImageResponse, Env } from '../types';
 
+const calculateBase64Size = (base64Data: string): number => {
+  if (!base64Data) return 0;
+
+  const paddingMatch = base64Data.match(/=+$/);
+  const paddingLength = paddingMatch ? paddingMatch[0].length : 0;
+
+  return Math.floor((base64Data.length * 3) / 4) - paddingLength;
+};
+
 /**
  * 健康检查路由
  */
@@ -93,6 +102,7 @@ export const generateImageRoute = registerApiRoute('/generate-image', {
           size: size,
           quality: quality,
           force_model: 'auto',
+          task_id,
         },
       } as any); // 使用 any 绕过类型检查
       
@@ -101,39 +111,55 @@ export const generateImageRoute = registerApiRoute('/generate-image', {
       // 上传到 R2（如果配置了）
       let finalImages;
       
-      if (r2Validation.valid && r2Bucket && r2PublicUrl) {
+      const generatedImages = generationResult.images ?? [];
+      const toolUploadedToR2 =
+        generatedImages.length > 0 &&
+        generatedImages.every((img: any) => img.storage_type === 'r2');
+      const canUploadWithWorker = r2Validation.valid && r2Bucket && r2PublicUrl;
+
+      if (toolUploadedToR2) {
+        finalImages = generatedImages.map((img: any, index: number) => ({
+          index: index + 1,
+          url: img.url,
+          storage_key: img.r2_key || '',
+          file_name: img.file_name,
+          size_bytes: img.size_bytes ?? calculateBase64Size(img.base64_data),
+        }));
+      } else if (canUploadWithWorker) {
         console.log(`☁️  开始上传到 R2...`);
-        
+
         const uploadResults = await uploadMultipleImages(
           r2Bucket,
           task_id,
-          generationResult.images,
+          generatedImages.map((img: any) => ({
+            url: `data:image/png;base64,${img.base64_data}`,
+          })),
           r2PublicUrl
         );
-        
+
         if (uploadResults.length > 0) {
           console.log(`✅ R2 上传完成: ${uploadResults.length}/${generationResult.total_count} 张`);
           finalImages = uploadResults;
         } else {
-          console.warn(`⚠️  R2 上传全部失败，使用本地路径`);
-          // 使用本地路径作为备选
-          finalImages = generationResult.images.map((img, index) => ({
+          console.warn(`⚠️  R2 上传全部失败，使用内嵌 data URL`);
+          // 使用 data URL 作为备选
+          finalImages = generatedImages.map((img: any, index: number) => ({
             index: index + 1,
-            url: img.local_path,
-            storage_key: img.local_path,
+            url: img.url,
+            storage_key: img.r2_key || '',
             file_name: img.file_name,
-            size_bytes: 0,
+            size_bytes: calculateBase64Size(img.base64_data),
           }));
         }
       } else {
-        // 没有配置 R2，使用本地路径
-        console.log(`💾 使用本地存储模式`);
-        finalImages = generationResult.images.map((img, index) => ({
+        // 没有配置 R2，使用 data URL
+        console.log(`💾 使用内嵌 data URL 模式`);
+        finalImages = generatedImages.map((img: any, index: number) => ({
           index: index + 1,
-          url: img.url, // 这里可能是本地路径或者 R2 URL（如果在工具中已经上传）
-          storage_key: img.r2_key || img.local_path,
+          url: img.url,
+          storage_key: img.r2_key || '',
           file_name: img.file_name,
-          size_bytes: 0,
+          size_bytes: calculateBase64Size(img.base64_data),
         }));
       }
       

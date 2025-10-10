@@ -52,6 +52,7 @@ export async function uploadToR2(
   success: boolean;
   url: string;
   key: string;
+  size?: number;
   error?: string;
 }> {
   try {
@@ -60,6 +61,7 @@ export async function uploadToR2(
         success: false,
         url: '',
         key: '',
+        size: 0,
         error: 'R2 未配置',
       };
     }
@@ -70,6 +72,7 @@ export async function uploadToR2(
 
     // 将 base64 转换为 Buffer
     const imageBuffer = Buffer.from(base64Data, 'base64');
+    const size = imageBuffer.length;
 
     // 上传到 R2
     await s3Client.send(
@@ -91,6 +94,7 @@ export async function uploadToR2(
         success: true,
         url: publicUrl,
         key,
+        size,
       };
     }
 
@@ -100,6 +104,7 @@ export async function uploadToR2(
       success: true,
       url: r2DevUrl,
       key,
+      size,
     };
   } catch (error: any) {
     console.error('R2 上传失败:', error);
@@ -107,6 +112,7 @@ export async function uploadToR2(
       success: false,
       url: '',
       key: '',
+      size: 0,
       error: error.message,
     };
   }

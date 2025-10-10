@@ -1,8 +1,6 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { GoogleGenAI } from '@google/genai';
-import * as fs from 'fs';
-import * as path from 'path';
 import { uploadToR2, isR2Configured } from '../../utils/r2-uploader';
 
 const GOOGLE_GEMINI_IMAGE_MODEL = 'gemini-2.5-flash-image';
@@ -21,30 +19,14 @@ const resolveGoogleApiKey = (): string | undefined => {
   return undefined;
 };
 
-/**
- * 确保本地输出目录存在（作为备份）
- */
-function ensureOutputDirectory(): string {
-  const outputDir = path.join(process.cwd(), 'output');
-  if (!fs.existsSync(outputDir)) {
-    fs.mkdirSync(outputDir, { recursive: true });
-  }
-  return outputDir;
-}
+const calculateBase64Size = (base64Data: string): number => {
+  if (!base64Data) return 0;
 
-/**
- * 保存图片到本地（备份）
- */
-function saveImageToFile(base64Data: string, outputDir: string, index: number): string {
-  const timestamp = Date.now();
-  const fileName = `gemini_${timestamp}_${index}.png`;
-  const filePath = path.join(outputDir, fileName);
-  
-  const imageBuffer = Buffer.from(base64Data, 'base64');
-  fs.writeFileSync(filePath, imageBuffer);
-  
-  return filePath;
-}
+  const paddingMatch = base64Data.match(/=+$/);
+  const paddingLength = paddingMatch ? paddingMatch[0].length : 0;
+
+  return Math.floor((base64Data.length * 3) / 4) - paddingLength;
+};
 
 const extractErrorMessage = (error: unknown): string => {
   if (!error) return '';
@@ -81,26 +63,37 @@ export const smartImageRouterTool = createTool({
       .enum(['auto', 'google-gemini-image', 'google-imagen'])
       .default('auto')
       .describe('强制使用的模型'),
+    task_id: z.string().optional().describe('用于标识任务的 ID'),
   }),
-  
+
   outputSchema: z.object({
     images: z.array(
       z.object({
-        url: z.string().describe('图片的公开 URL（Cloudflare R2 或本地）'),
+        url: z.string().describe('图片的公开 URL（Cloudflare R2 或内嵌 data URL）'),
         r2_key: z.string().optional().describe('R2 存储路径'),
-        local_path: z.string().describe('本地备份路径'),
         file_name: z.string().describe('文件名'),
-        storage_type: z.enum(['r2', 'local']).describe('存储类型'),
+        storage_type: z.enum(['r2', 'inline']).describe('存储类型'),
         model_used: z.string().describe('使用的模型'),
+        base64_data: z.string().describe('Base64 编码的图片数据'),
+        size_bytes: z.number().optional().describe('图片大小（字节）'),
       }),
     ),
     total_count: z.number(),
     generation_time: z.number().describe('生成耗时（秒）'),
-    output_directory: z.string().describe('本地输出目录'),
   }),
   
   execute: async ({ context }) => {
-    const { optimized_prompt, count, size } = context;
+    const {
+      optimized_prompt,
+      count,
+      size,
+      task_id,
+    } = context as {
+      optimized_prompt: string;
+      count: number;
+      size: '1024x1024' | '1024x1792' | '1792x1024';
+      task_id?: string;
+    };
 
     const googleApiKey = resolveGoogleApiKey();
 
@@ -114,17 +107,16 @@ export const smartImageRouterTool = createTool({
     const images: Array<{
       url: string;
       r2_key?: string;
-      local_path: string;
       file_name: string;
-      storage_type: 'r2' | 'local';
+      storage_type: 'r2' | 'inline';
       model_used: string;
+      base64_data: string;
+      size_bytes?: number;
     }> = [];
     const targetCount = Math.min(count, MAX_IMAGES_PER_REQUEST);
-    const taskId = `task_${Date.now()}`;
-    
-    // 确保本地输出目录存在（作为备份）
-    const outputDir = ensureOutputDirectory();
-    
+    const requestedTaskId = typeof task_id === 'string' ? task_id.trim() : '';
+    const taskId = requestedTaskId.length > 0 ? requestedTaskId : `task_${Date.now()}`;
+
     // 检查 R2 是否已配置
     const hasR2 = isR2Configured();
     
@@ -157,39 +149,40 @@ export const smartImageRouterTool = createTool({
                 if (part.inlineData && part.inlineData.data) {
                   const imageData = part.inlineData.data;
                   
-                  // 1. 保存到本地（备份）
-                  const localPath = saveImageToFile(imageData, outputDir, images.length + 1);
-                  const fileName = path.basename(localPath);
-                  console.log(`💾 本地备份: ${localPath}`);
-                  
-                  let finalUrl = localPath;
-                  let storageType: 'r2' | 'local' = 'local';
+                  const fileName = `gemini_${Date.now()}_${images.length + 1}.png`;
+                  const inlineUrl = `data:image/png;base64,${imageData}`;
+                  const imageSize = calculateBase64Size(imageData);
+
+                  let finalUrl = inlineUrl;
+                  let storageType: 'r2' | 'inline' = 'inline';
                   let r2Key: string | undefined = undefined;
-                  
-                  // 2. 上传到 R2（如果配置了）
+                  let sizeBytes = imageSize;
+
                   if (hasR2) {
                     console.log(`☁️  正在上传到 Cloudflare R2...`);
                     const uploadResult = await uploadToR2(imageData, taskId, images.length + 1);
-                    
+
                     if (uploadResult.success) {
                       finalUrl = uploadResult.url;
                       r2Key = uploadResult.key;
                       storageType = 'r2';
+                      sizeBytes = uploadResult.size ?? imageSize;
                       console.log(`✅ R2 上传成功!`);
                       console.log(`🔗 公开 URL: ${finalUrl}`);
                     } else {
                       console.warn(`⚠️  R2 上传失败: ${uploadResult.error}`);
-                      console.warn(`⚠️  将使用本地路径`);
+                      console.warn(`⚠️  将使用内嵌 data URL`);
                     }
                   }
-                  
+
                   images.push({
                     url: finalUrl,
                     r2_key: r2Key,
-                    local_path: localPath,
                     file_name: fileName,
                     storage_type: storageType,
                     model_used: GOOGLE_GEMINI_IMAGE_MODEL,
+                    base64_data: imageData,
+                    size_bytes: sizeBytes,
                   });
                 }
               }
@@ -207,9 +200,8 @@ export const smartImageRouterTool = createTool({
       console.log(`\n🎉 生成完成！`);
       console.log(`📊 总数: ${images.length} 张`);
       console.log(`⏱️  耗时: ${generationTime.toFixed(2)} 秒`);
-      console.log(`💾 存储: ${hasR2 ? 'Cloudflare R2 + 本地备份' : '本地'}`);
-      console.log(`📁 本地目录: ${outputDir}\n`);
-      
+      console.log(`💾 存储: ${hasR2 ? 'Cloudflare R2' : '内嵌 data URL'}`);
+
       // 打印所有图片的 URL
       images.forEach((img, idx) => {
         console.log(`图片 ${idx + 1}:`);
@@ -217,14 +209,13 @@ export const smartImageRouterTool = createTool({
         if (img.r2_key) {
           console.log(`  ☁️  R2 Key: ${img.r2_key}`);
         }
-        console.log(`  💾 本地: ${img.local_path}\n`);
+        console.log(`  💾 存储类型: ${img.storage_type}\n`);
       });
-      
+
       return {
         images,
         total_count: images.length,
         generation_time: generationTime,
-        output_directory: outputDir,
       };
     } catch (error) {
       const message = extractErrorMessage(error);
