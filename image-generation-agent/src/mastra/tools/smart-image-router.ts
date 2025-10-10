@@ -8,8 +8,18 @@ import { uploadToR2, isR2Configured } from '../../utils/r2-uploader';
 const GOOGLE_GEMINI_IMAGE_MODEL = 'gemini-2.5-flash-image';
 const MAX_IMAGES_PER_REQUEST = 4;
 
-// 使用官方方式初始化
-const ai = new GoogleGenAI({});
+const resolveGoogleApiKey = (): string | undefined => {
+  if (typeof process !== 'undefined' && process.env?.GOOGLE_API_KEY) {
+    return process.env.GOOGLE_API_KEY;
+  }
+
+  const globalApiKey = (globalThis as unknown as { GOOGLE_API_KEY?: string }).GOOGLE_API_KEY;
+  if (typeof globalApiKey === 'string' && globalApiKey.length > 0) {
+    return globalApiKey;
+  }
+
+  return undefined;
+};
 
 /**
  * 确保本地输出目录存在（作为备份）
@@ -92,9 +102,13 @@ export const smartImageRouterTool = createTool({
   execute: async ({ context }) => {
     const { optimized_prompt, count, size } = context;
 
-    if (!process.env.GOOGLE_API_KEY) {
+    const googleApiKey = resolveGoogleApiKey();
+
+    if (!googleApiKey) {
       throw new Error('图像生成失败: 未配置 GOOGLE_API_KEY 环境变量');
     }
+
+    const ai = new GoogleGenAI({ apiKey: googleApiKey });
 
     const startTime = Date.now();
     const images: Array<{

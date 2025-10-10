@@ -4,19 +4,95 @@
  * 这是部署到 Cloudflare Workers 的主入口
  */
 
+import './polyfills/dom-parser';
+
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import type { Handler, MiddlewareHandler } from 'hono';
+import type { ApiRoute } from '@mastra/core/server';
 import type { Env } from '../src/types';
 
 // 导入路由
-import { 
-  healthRoute, 
-  generateImageRoute, 
+import {
+  healthRoute,
+  generateImageRoute,
   generateBatchRoute,
-  taskStatusRoute 
+  taskStatusRoute
 } from '../src/api/routes';
 
 const app = new Hono<{ Bindings: Env }>();
+
+type RouteMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'ALL';
+
+const addRouteHandler = (
+  target: Hono<{ Bindings: Env }>,
+  method: RouteMethod,
+  path: string,
+  handlers: Handler[]
+) => {
+  if (handlers.length === 0) {
+    return;
+  }
+  switch (method) {
+    case 'GET':
+      target.get(path, ...handlers);
+      break;
+    case 'POST':
+      target.post(path, ...handlers);
+      break;
+    case 'PUT':
+      target.put(path, ...handlers);
+      break;
+    case 'DELETE':
+      target.delete(path, ...handlers);
+      break;
+    case 'PATCH':
+      target.patch(path, ...handlers);
+      break;
+    case 'ALL':
+      target.all(path, ...handlers);
+      break;
+    default:
+      target.on(method, path, ...handlers);
+  }
+};
+
+const registerRoutes = (
+  target: Hono<{ Bindings: Env }>,
+  prefix: string,
+  routes: ApiRoute[]
+) => {
+  for (const route of routes) {
+    const normalizedPath = route.path.startsWith('/')
+      ? `${prefix}${route.path}`
+      : `${prefix}/${route.path}`;
+
+    const middlewares: MiddlewareHandler[] = Array.isArray(route.middleware)
+      ? route.middleware
+      : route.middleware
+      ? [route.middleware]
+      : [];
+
+    if ('handler' in route && route.handler) {
+      const handlerStack = [
+        ...middlewares.map((mw) => mw as Handler),
+        route.handler as Handler,
+      ];
+      addRouteHandler(target, route.method as RouteMethod, normalizedPath, handlerStack);
+    } else if ('createHandler' in route && route.createHandler) {
+      const handlerStack = [
+        ...middlewares.map((mw) => mw as Handler),
+        (async (c, next) => {
+          const handler = await route.createHandler({
+            mastra: c.get('mastra'),
+          });
+          return handler(c, next);
+        }) as Handler,
+      ];
+      addRouteHandler(target, route.method as RouteMethod, normalizedPath, handlerStack);
+    }
+  }
+};
 
 // 配置 CORS
 app.use('/*', cors({
@@ -29,10 +105,12 @@ app.use('/*', cors({
 }));
 
 // 注册路由
-app.route('/api', healthRoute);
-app.route('/api', generateImageRoute);
-app.route('/api', generateBatchRoute);
-app.route('/api', taskStatusRoute);
+registerRoutes(app, '/api', [
+  healthRoute,
+  generateImageRoute,
+  generateBatchRoute,
+  taskStatusRoute,
+]);
 
 // 根路径
 app.get('/', (c) => {
