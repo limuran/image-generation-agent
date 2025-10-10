@@ -3,7 +3,7 @@
  * 可以直接测试 Gemini Image API 是否工作
  */
 
-import { GoogleGenAI } from '@google/genai'
+import { GoogleGenAI, Modality } from '@google/genai'
 import * as fs from 'fs'
 import * as path from 'path'
 import { fileURLToPath } from 'url'
@@ -43,13 +43,22 @@ async function testImageGeneration() {
 
     console.log('⏳ 正在生成图片...')
 
-    const response = await geminiClient.models.generateImages({
-      model: 'models/gemini-2.5-flash-image',
-      prompt: prompt,
+    const response = await geminiClient.models.generateContent({
+      model: 'gemini-2.5-flash-image',
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              text: `${prompt}\n\n请输出 1:1 构图的图像 (1024x1024)`
+            }
+          ]
+        }
+      ],
       config: {
-        numberOfImages: 1,
-        aspectRatio: '1:1',
-        outputMimeType: 'image/png'
+        candidateCount: 1,
+        responseMimeType: 'image/png',
+        responseModalities: [Modality.IMAGE]
       }
     })
 
@@ -57,8 +66,27 @@ async function testImageGeneration() {
 
     console.log(`✅ 图片生成成功！耗时: ${generationTime}秒\n`)
 
-    // 保存图片
-    if (response.generatedImages && response.generatedImages.length > 0) {
+    const candidates = response.candidates ?? []
+    const inlineImages = []
+
+    for (const candidate of candidates) {
+      const parts = candidate.content?.parts ?? []
+      for (const part of parts) {
+        const inlineData = part.inlineData
+        if (inlineData?.data) {
+          inlineImages.push({
+            mimeType: inlineData.mimeType || 'image/png',
+            data: inlineData.data
+          })
+        }
+      }
+    }
+
+    if (inlineImages.length === 0 && typeof response.data === 'string') {
+      inlineImages.push({ mimeType: 'image/png', data: response.data })
+    }
+
+    if (inlineImages.length > 0) {
       const outputDir = path.join(__dirname, '..', 'output')
 
       // 确保输出目录存在
@@ -66,21 +94,16 @@ async function testImageGeneration() {
         fs.mkdirSync(outputDir, { recursive: true })
       }
 
-      for (let i = 0; i < response.generatedImages.length; i++) {
-        const imageData = response.generatedImages[i].image
+      inlineImages.forEach((imageData, index) => {
+        const timestamp = Date.now()
+        const fileName = `test_gemini_${timestamp}_${index + 1}.png`
+        const filePath = path.join(outputDir, fileName)
 
-        if (imageData && imageData.imageBytes) {
-          const timestamp = Date.now()
-          const fileName = `test_gemini_${timestamp}_${i + 1}.png`
-          const filePath = path.join(outputDir, fileName)
+        const buffer = Buffer.from(imageData.data, 'base64')
+        fs.writeFileSync(filePath, buffer)
 
-          // 保存文件
-          const buffer = Buffer.from(imageData.imageBytes, 'base64')
-          fs.writeFileSync(filePath, buffer)
-
-          console.log(`💾 图片已保存: ${filePath}`)
-        }
-      }
+        console.log(`💾 图片已保存: ${filePath}`)
+      })
 
       console.log('\n🎉 测试完成！')
       console.log(`📁 图片保存在: ${outputDir}`)

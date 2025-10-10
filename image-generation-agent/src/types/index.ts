@@ -44,6 +44,8 @@ export interface GenerateImageResponse {
     index: number;
     url: string;
     storage_key: string;
+    file_name?: string;
+    size_bytes?: number;
   }>;
   generation_time: number;
   expires_at?: string;

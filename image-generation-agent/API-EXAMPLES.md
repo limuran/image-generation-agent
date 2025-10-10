@@ -2,6 +2,46 @@
 
 ## 基础示例
 
+### ⚡️ 本地开发快速测试（`wrangler dev` 默认端口 `8787`）
+
+```bash
+curl -X POST http://localhost:8787/api/generate-image \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task_id": "test_001",
+    "prompt": "a cute cat",
+    "count": 1
+  }'
+```
+
+### 🌐 浏览器端 `fetch` 调用示例
+
+```typescript
+async function requestImage() {
+  const response = await fetch('http://localhost:8787/api/generate-image', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      task_id: 'test_001',
+      prompt: 'a cute cat',
+      count: 1,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Request failed: ${response.status}`);
+  }
+
+  const data = await response.json();
+  console.log('生成结果', data);
+  return data;
+}
+
+requestImage().catch(console.error);
+```
+
 ### 1. 生成单张图片
 
 ```bash

@@ -1,8 +1,8 @@
 import { createTool } from '@mastra/core/tools'
 import { z } from 'zod'
-import { GoogleGenAI } from '@google/genai'
+import { GoogleGenAI, Modality } from '@google/genai'
 
-const GOOGLE_GEMINI_IMAGE_MODEL = 'models/gemini-2.5-flash-image'
+const GOOGLE_GEMINI_IMAGE_MODEL = 'gemini-2.5-flash-image'
 const MAX_IMAGES_PER_REQUEST = 4
 
 const googleApiKey = process.env.GOOGLE_API_KEY
@@ -62,27 +62,63 @@ export const imageGeneratorTool = createTool({
     const targetCount = Math.min(count, MAX_IMAGES_PER_REQUEST)
     const aspectRatio = aspectRatioMap[size]
     try {
-      // 生成多张图片
-      const response = await geminiImageClient.models.generateImages({
-        model: GOOGLE_GEMINI_IMAGE_MODEL,
-        prompt,
-        config: {
-          numberOfImages: targetCount,
-          aspectRatio,
-          outputMimeType: 'image/png'
-        }
-      })
-
-      for (const generatedImage of response.generatedImages ?? []) {
-        const imagePayload = generatedImage.image
-        if (!imagePayload?.imageBytes) {
-          continue
-        }
-
-        const mimeType = imagePayload.mimeType || 'image/png'
-        images.push({
-          url: `data:${mimeType};base64,${imagePayload.imageBytes}`
+      for (let i = 0; i < targetCount; i++) {
+        const response = await geminiImageClient.models.generateContent({
+          model: GOOGLE_GEMINI_IMAGE_MODEL,
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  text: `${prompt}\n\n请使用 ${aspectRatio} 的构图比例 (尺寸 ${size})`
+                }
+              ]
+            }
+          ],
+          config: {
+            candidateCount: 1,
+            responseMimeType: 'image/png',
+            responseModalities: [Modality.IMAGE]
+          }
         })
+
+        const candidates = response.candidates ?? []
+        let addedImage = false
+
+        for (const candidate of candidates) {
+          const parts = candidate.content?.parts ?? []
+
+          for (const part of parts) {
+            const inlineData = part.inlineData
+            if (!inlineData?.data) {
+              continue
+            }
+
+            const mimeType = inlineData.mimeType || 'image/png'
+            images.push({
+              url: `data:${mimeType};base64,${inlineData.data}`
+            })
+            addedImage = true
+
+            if (images.length >= targetCount) {
+              break
+            }
+          }
+
+          if (images.length >= targetCount) {
+            break
+          }
+        }
+
+        if (!addedImage && typeof response.data === 'string') {
+          images.push({
+            url: `data:image/png;base64,${response.data}`
+          })
+        }
+
+        if (images.length >= targetCount) {
+          break
+        }
       }
 
       if (images.length === 0) {
