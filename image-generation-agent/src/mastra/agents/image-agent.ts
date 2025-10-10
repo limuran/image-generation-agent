@@ -55,7 +55,7 @@ export const imageGenerationAgent = new Agent({
 - **⭐ 生成完成后，必须明确告诉用户：**
   1. ✅ 图片生成成功
   2. 📊 生成了多少张图片
-  3. 📁 图片保存在哪个目录（从工具返回的 output_directory）
+  3. 📁 图片保存在哪个目录（使用工具返回的 R2 地址，即 smartImageRouterTool 返回的 URL）
   4. 📄 文件名是什么
   5. ⏱️ 生成耗时
 
@@ -64,7 +64,7 @@ export const imageGenerationAgent = new Agent({
 
 ✅ 生成成功！
 📊 共生成 1 张图片
-📁 保存位置: /your/path/output/
+📁 保存位置: <smartImageRouterTool 返回的 R2 URL>
 📄 文件名: gemini_1728356789123_1.png
 ⏱️ 耗时: 3.2 秒
 
