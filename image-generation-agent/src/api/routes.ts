@@ -107,31 +107,33 @@ export const generateImageRoute = registerApiRoute('/generate-image', {
         const uploadResults = await uploadMultipleImages(
           r2Bucket,
           task_id,
-          generationResult.images,
+          generationResult.images.map((img) => ({
+            url: `data:image/png;base64,${img.base64_data}`,
+          })),
           r2PublicUrl
         );
-        
+
         if (uploadResults.length > 0) {
           console.log(`✅ R2 上传完成: ${uploadResults.length}/${generationResult.total_count} 张`);
           finalImages = uploadResults;
         } else {
-          console.warn(`⚠️  R2 上传全部失败，使用本地路径`);
-          // 使用本地路径作为备选
+          console.warn(`⚠️  R2 上传全部失败，使用内嵌 data URL`);
+          // 使用 data URL 作为备选
           finalImages = generationResult.images.map((img, index) => ({
             index: index + 1,
-            url: img.local_path,
-            storage_key: img.local_path,
+            url: img.url,
+            storage_key: img.r2_key || '',
             file_name: img.file_name,
             size_bytes: 0,
           }));
         }
       } else {
-        // 没有配置 R2，使用本地路径
-        console.log(`💾 使用本地存储模式`);
+        // 没有配置 R2，使用 data URL
+        console.log(`💾 使用内嵌 data URL 模式`);
         finalImages = generationResult.images.map((img, index) => ({
           index: index + 1,
-          url: img.url, // 这里可能是本地路径或者 R2 URL（如果在工具中已经上传）
-          storage_key: img.r2_key || img.local_path,
+          url: img.url,
+          storage_key: img.r2_key || '',
           file_name: img.file_name,
           size_bytes: 0,
         }));
