@@ -1,86 +1,40 @@
 name = "image-generation-agent"
-# 替换为你的 Cloudflare 账号 ID
+# ⚠️ 重要：替换为你的 Cloudflare 账号 ID
 account_id = "85cff694f5f5b50f3d927558217bdad7"
 
 main = "workers/index.ts"
 compatibility_date = "2025-10-08"
 compatibility_flags = ["nodejs_compat"]
-
-# 默认启用 workers.dev 预览域名，方便开发/调试
 workers_dev = true
 
 # ============================================
-# 构建与部署配置
-# ============================================
-[build]
-command = "npm run build"
-watch_dir = ["src", "workers"]
-
-# ============================================
-# R2 Bucket 绑定（默认环境）
+# R2 Bucket 绑定
 # ============================================
 [[r2_buckets]]
 binding = "IMAGE_STORAGE"
 bucket_name = "image-agent-storage"
 
 # ============================================
-# 默认环境变量（可根据需要覆盖）
-# 将 R2_PUBLIC_URL 替换为你的公开访问域名
-# 例：https://pub-xxxxx.r2.dev 或 https://images.example.com
+# 环境变量
+# ⚠️ 重要：将 R2_PUBLIC_URL 替换为你的实际 R2 公开域名
+# 获取方式：Cloudflare Dashboard > R2 > 你的 bucket > Settings > Public Access
+# 格式：https://pub-xxxxx.r2.dev 或自定义域名
 # ============================================
 [vars]
 NODE_ENV = "production"
-R2_PUBLIC_URL = "https://your-r2-public-domain"
+R2_PUBLIC_URL = "https://pub-386731fd88bd4ce79043ea68d15bd5fe.r2.dev"
 
 # ============================================
-# 开发环境（wrangler dev --env development）
+# 开发环境配置
 # ============================================
 [env.development]
 name = "image-generation-agent-dev"
 workers_dev = true
-vars = { NODE_ENV = "development", R2_PUBLIC_URL = "http://127.0.0.1:8787/output" }
+
+[env.development.vars]
+NODE_ENV = "development"
+R2_PUBLIC_URL = "http://localhost:8787/images"
 
 [[env.development.r2_buckets]]
 binding = "IMAGE_STORAGE"
 bucket_name = "image-agent-storage-dev"
-
-# ============================================
-# 预发布环境（可选）
-# 部署：wrangler deploy --env preview
-# ============================================
-[env.preview]
-name = "image-generation-agent-preview"
-workers_dev = true
-vars = { NODE_ENV = "preview", R2_PUBLIC_URL = "https://preview-r2-domain.example.com" }
-
-[[env.preview.r2_buckets]]
-binding = "IMAGE_STORAGE"
-bucket_name = "image-agent-storage-preview"
-
-# ============================================
-# 生产环境（正式部署）
-# 部署：wrangler deploy --env production
-# 将 pattern 替换为你的自定义域名路由
-# 将 zone_id 替换为域名对应的 Zone ID
-# ============================================
-[env.production]
-name = "image-generation-agent-prod"
-workers_dev = false
-zone_id = "YOUR_ZONE_ID"
-vars = { NODE_ENV = "production", R2_PUBLIC_URL = "https://your-r2-public-domain" }
-
-[[env.production.routes]]
-pattern = "api.example.com/*"
-custom_domain = true
-
-[[env.production.r2_buckets]]
-binding = "IMAGE_STORAGE"
-bucket_name = "image-agent-storage"
-
-# ============================================
-# 提示：敏感信息使用 wrangler secret 管理
-#   wrangler secret put GOOGLE_API_KEY
-#   wrangler secret put R2_ACCOUNT_ID
-#   wrangler secret put R2_ACCESS_KEY_ID
-#   wrangler secret put R2_SECRET_ACCESS_KEY
-# ============================================
