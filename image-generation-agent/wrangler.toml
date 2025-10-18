@@ -33,7 +33,7 @@ workers_dev = true
 
 [env.development.vars]
 NODE_ENV = "development"
-R2_PUBLIC_URL = "http://localhost:8787/images"
+R2_PUBLIC_URL = "https://pub-386731fd88bd4ce79043ea68d15bd5fe.r2.dev"
 
 [[env.development.r2_buckets]]
 binding = "IMAGE_STORAGE"

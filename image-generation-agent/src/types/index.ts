@@ -12,6 +12,7 @@ export interface Env {
   IMAGE_STORAGE: R2Bucket;
   
   // API密钥
+  GOOGLE_API_KEY: string;
   MOONSHOT_API_KEY: string;
   OPENAI_API_KEY: string;
   
@@ -21,7 +22,41 @@ export interface Env {
 }
 
 /**
- * 图像生成请求参数
+ * 第三方AI请求（新增）
+ */
+export interface ThirdPartyAIRequest {
+  task_id: string;
+  prompt: string;
+  webhook_url: string;
+  count?: number;
+  options?: {
+    size?: '1024x1024' | '1024x1792' | '1792x1024';
+    quality?: 'standard' | 'hd';
+  };
+}
+
+/**
+ * 第三方AI响应（新增）
+ */
+export interface ThirdPartyAIResponse {
+  task_id: string;
+}
+
+/**
+ * Webhook 回调数据（新增）
+ */
+export interface WebhookCallbackData {
+  task_id: string;
+  generation_time: number;
+  artifacts: Array<{
+    index?: number;
+    url: string;
+    size_bytes?: number;
+  }>;
+}
+
+/**
+ * 图像生成请求参数（保留用于兼容）
  */
 export interface GenerateImageRequest {
   task_id: string;
@@ -34,7 +69,7 @@ export interface GenerateImageRequest {
 }
 
 /**
- * 图像生成响应
+ * 图像生成响应（保留用于兼容）
  */
 export interface GenerateImageResponse {
   success: boolean;

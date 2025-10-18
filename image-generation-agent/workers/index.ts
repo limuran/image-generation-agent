@@ -1,11 +1,11 @@
 /**
  * Cloudflare Workers 入口文件
- * 修复版：直接集成图像生成逻辑，无需依赖 Mastra 路由
+ * 支持异步任务处理和 Webhook 回调
  */
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import type { Env } from '../src/types';
+import type { Env, ThirdPartyAIRequest, ThirdPartyAIResponse, WebhookCallbackData } from '../src/types';
 import { GoogleGenAI } from '@google/genai';
 import { uploadMultipleImages, validateR2Config } from '../src/utils/r2-storage';
 
@@ -27,74 +27,37 @@ app.get('/api/health', (c) => {
     status: 'ok',
     service: 'image-generation-agent',
     timestamp: new Date().toISOString(),
-    version: '1.0.0',
+    version: '2.0.0',
   });
 });
 
-// 图像生成路由
-app.post('/api/generate-image', async (c) => {
+/**
+ * 后台执行图片生成并回调 Webhook
+ */
+async function generateAndCallback(
+  task_id: string,
+  prompt: string,
+  webhook_url: string,
+  count: number,
+  env: Env
+) {
   const startTime = Date.now();
-  let task_id: string | undefined;
   
   try {
-    const body = await c.req.json();
+    console.log(`🎨 [${task_id}] 后台任务开始，生成 ${count} 张图片`);
     
-    task_id = body.task_id;
-    const prompt = body.prompt;
-    const count = body.count ?? 1;
-    const size = body.options?.size ?? '1024x1024';
-    
-    // 验证参数
-    if (!task_id || !prompt) {
-      return c.json({
-        success: false,
-        task_id: task_id || 'unknown',
-        generation_time: 0,
-        error: {
-          code: 'MISSING_PARAMETERS',
-          message: 'task_id 和 prompt 是必需的参数',
-        },
-      }, 400);
-    }
-    
-    if (count < 1 || count > 5) {
-      return c.json({
-        success: false,
-        task_id,
-        generation_time: 0,
-        error: {
-          code: 'INVALID_COUNT',
-          message: 'count 必须在 1-5 之间',
-        },
-      }, 400);
-    }
-    
-    console.log(`📥 收到任务: ${task_id}`);
-    console.log(`📝 Prompt: "${prompt}"`);
-    console.log(`🔢 数量: ${count}`);
-    
-    // 获取环境变量
-    const env = c.env as Env;
     const googleApiKey = env.GOOGLE_API_KEY;
     const r2Bucket = env.IMAGE_STORAGE;
     const r2PublicUrl = env.R2_PUBLIC_URL;
     
     if (!googleApiKey) {
-      return c.json({
-        success: false,
-        task_id,
-        generation_time: 0,
-        error: {
-          code: 'MISSING_API_KEY',
-          message: '未配置 GOOGLE_API_KEY',
-        },
-      }, 500);
+      throw new Error('未配置 GOOGLE_API_KEY');
     }
     
     // 验证 R2 配置
     const r2Validation = validateR2Config(r2Bucket, r2PublicUrl);
     if (!r2Validation.valid) {
-      console.warn(`⚠️  R2 配置警告: ${r2Validation.error}`);
+      console.warn(`⚠️  [${task_id}] R2 配置警告: ${r2Validation.error}`);
     }
     
     // 初始化 Gemini 客户端
@@ -102,10 +65,8 @@ app.post('/api/generate-image', async (c) => {
     const images: Array<{ url: string }> = [];
     
     // 生成图片
-    console.log(`🎨 开始生成图片...`);
-    
     for (let i = 0; i < Math.min(count, 4); i++) {
-      console.log(`⏳ 正在生成第 ${i + 1}/${count} 张图片...`);
+      console.log(`⏳ [${task_id}] 正在生成第 ${i + 1}/${count} 张图片...`);
       
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash-image',
@@ -138,13 +99,13 @@ app.post('/api/generate-image', async (c) => {
       throw new Error('未从 Gemini 获得任何图像');
     }
     
-    console.log(`✅ 图片生成完成，共 ${images.length} 张`);
+    console.log(`✅ [${task_id}] 图片生成完成，共 ${images.length} 张`);
     
-    // 上传到 R2
-    let finalImages;
+    // 上传到 R2 或使用 base64
+    let artifacts: WebhookCallbackData['artifacts'] = [];
     
     if (r2Validation.valid && r2Bucket && r2PublicUrl) {
-      console.log(`☁️  开始上传到 R2...`);
+      console.log(`☁️  [${task_id}] 开始上传到 R2...`);
       
       const uploadResults = await uploadMultipleImages(
         r2Bucket,
@@ -154,60 +115,159 @@ app.post('/api/generate-image', async (c) => {
       );
       
       if (uploadResults.length > 0) {
-        console.log(`✅ R2 上传完成: ${uploadResults.length}/${images.length} 张`);
-        finalImages = uploadResults;
+        console.log(`✅ [${task_id}] R2 上传完成: ${uploadResults.length}/${images.length} 张`);
+        artifacts = uploadResults.map(result => ({
+          index: result.index,
+          url: result.url,
+          size_bytes: result.size_bytes,
+        }));
       } else {
-        console.warn(`⚠️  R2 上传失败，返回 base64 数据`);
-        finalImages = images.map((img, index) => ({
+        console.warn(`⚠️  [${task_id}] R2 上传失败，使用 base64 数据`);
+        artifacts = images.map((img, index) => ({
           index: index + 1,
           url: img.url,
-          storage_key: 'base64',
-          file_name: `image_${index + 1}.png`,
           size_bytes: 0,
         }));
       }
     } else {
       // 没有配置 R2，返回 base64
-      console.log(`💾 使用 base64 格式返回`);
-      finalImages = images.map((img, index) => ({
+      console.log(`💾 [${task_id}] 使用 base64 格式`);
+      artifacts = images.map((img, index) => ({
         index: index + 1,
         url: img.url,
-        storage_key: 'base64',
-        file_name: `image_${index + 1}.png`,
         size_bytes: 0,
       }));
     }
     
-    const totalTime = (Date.now() - startTime) / 1000;
+    const generation_time = (Date.now() - startTime) / 1000;
     
-    console.log(`✅ 任务完成: ${task_id}, 耗时: ${totalTime.toFixed(2)}s`);
-    
-    return c.json({
-      success: true,
+    // 回调 Webhook
+    const callbackData: WebhookCallbackData = {
       task_id,
-      total_images: finalImages.length,
-      images: finalImages,
-      generation_time: totalTime,
-      expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-      metadata: {
-        prompt,
-        requested_count: count,
-        actual_count: finalImages.length,
-        model_used: 'gemini-2.5-flash-image',
+      generation_time,
+      artifacts,
+    };
+    
+    console.log(`🔔 [${task_id}] 开始回调 Webhook: ${webhook_url}`);
+    
+    const webhookResponse = await fetch(webhook_url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
       },
+      body: JSON.stringify(callbackData),
     });
     
+    if (webhookResponse.ok) {
+      console.log(`✅ [${task_id}] Webhook 回调成功，状态: ${webhookResponse.status}`);
+    } else {
+      const errorText = await webhookResponse.text();
+      console.error(`❌ [${task_id}] Webhook 回调失败: ${webhookResponse.status} - ${errorText}`);
+    }
+    
+    console.log(`✅ [${task_id}] 任务完成，总耗时: ${generation_time.toFixed(2)}s`);
+    
   } catch (error: any) {
-    console.error('❌ 处理失败:', error);
-    const totalTime = (Date.now() - startTime) / 1000;
+    console.error(`❌ [${task_id}] 任务失败:`, error);
+    
+    // 即使失败也尝试回调 Webhook 通知错误
+    try {
+      const generation_time = (Date.now() - startTime) / 1000;
+      await fetch(webhook_url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          task_id,
+          generation_time,
+          artifacts: [],
+          error: {
+            code: 'GENERATION_FAILED',
+            message: error.message || '图像生成失败',
+          },
+        }),
+      });
+    } catch (webhookError) {
+      console.error(`❌ [${task_id}] Webhook 错误通知失败:`, webhookError);
+    }
+  }
+}
+
+/**
+ * 新增：异步任务创建端点
+ */
+app.post('/api/generate-image', async (c) => {
+  try {
+    const body = await c.req.json() as ThirdPartyAIRequest;
+    
+    const { task_id, prompt, webhook_url, count = 1, options } = body;
+    
+    // 验证必需参数
+    if (!task_id || !prompt || !webhook_url) {
+      return c.json({
+        success: false,
+        error: {
+          code: 'MISSING_PARAMETERS',
+          message: 'task_id、prompt 和 webhook_url 是必需的参数',
+        },
+      }, 400);
+    }
+    
+    // 验证 webhook_url 格式
+    try {
+      new URL(webhook_url);
+    } catch {
+      return c.json({
+        success: false,
+        error: {
+          code: 'INVALID_WEBHOOK_URL',
+          message: 'webhook_url 格式无效',
+        },
+      }, 400);
+    }
+    
+    // 验证 count
+    if (count < 1 || count > 5) {
+      return c.json({
+        success: false,
+        error: {
+          code: 'INVALID_COUNT',
+          message: 'count 必须在 1-5 之间',
+        },
+      }, 400);
+    }
+    
+    console.log(`📥 收到任务: ${task_id}`);
+    console.log(`📝 Prompt: "${prompt}"`);
+    console.log(`🔢 数量: ${count}`);
+    console.log(`🔗 Webhook: ${webhook_url}`);
+    
+    // 获取执行上下文，用于后台任务
+    const env = c.env as Env;
+    
+    // 在后台执行图片生成和回调
+    c.executionCtx.waitUntil(
+      generateAndCallback(task_id, prompt, webhook_url, count, env)
+    );
+    
+    // 立即返回 task_id
+    const response: ThirdPartyAIResponse = {
+      task_id,
+    };
+    
+    console.log(`✅ 任务已接受: ${task_id}`);
+    
+    return c.json(response, 202); // 202 Accepted
+    
+  } catch (error: any) {
+    console.error('❌ 请求处理失败:', error);
     
     return c.json({
       success: false,
-      task_id: task_id || 'unknown',
-      generation_time: totalTime,
       error: {
-        code: 'GENERATION_FAILED',
-        message: error.message || '图像生成失败',
+        code: 'REQUEST_FAILED',
+        message: error.message || '请求处理失败',
       },
     }, 500);
   }
@@ -217,11 +277,12 @@ app.post('/api/generate-image', async (c) => {
 app.get('/', (c) => {
   return c.json({
     service: 'image-generation-agent',
-    version: '1.0.0',
+    version: '2.0.0',
     status: 'running',
+    mode: 'async-with-webhook',
     endpoints: [
       'GET  /api/health',
-      'POST /api/generate-image',
+      'POST /api/generate-image (async + webhook)',
     ],
   });
 });
