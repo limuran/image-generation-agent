@@ -1,11 +1,16 @@
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+// 注意：Cloudflare Workers 环境不提供 AWS SDK 依赖的 DOMParser。
+// 因此仅在 Node.js（如 mastra dev、本地脚本）中动态加载 AWS SDK。
+type AwsSdkModule = typeof import('@aws-sdk/client-s3');
 
-// R2 配置
-const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID;
-const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID;
-const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY;
-const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME;
-const R2_PUBLIC_DOMAIN = process.env.R2_PUBLIC_DOMAIN; // 可选：自定义域名
+let awsSdkModule: AwsSdkModule | null = null;
+let s3ClientSingleton: InstanceType<AwsSdkModule['S3Client']> | null = null;
+
+// R2 配置（仅 Node.js 环境可用）
+const R2_ACCOUNT_ID = typeof process !== 'undefined' ? process.env.R2_ACCOUNT_ID : undefined;
+const R2_ACCESS_KEY_ID = typeof process !== 'undefined' ? process.env.R2_ACCESS_KEY_ID : undefined;
+const R2_SECRET_ACCESS_KEY = typeof process !== 'undefined' ? process.env.R2_SECRET_ACCESS_KEY : undefined;
+const R2_BUCKET_NAME = typeof process !== 'undefined' ? process.env.R2_BUCKET_NAME : undefined;
+const R2_PUBLIC_DOMAIN = typeof process !== 'undefined' ? process.env.R2_PUBLIC_DOMAIN : undefined; // 可选：自定义域名
 
 /**
  * 检查 R2 是否已配置
@@ -19,22 +24,57 @@ export function isR2Configured(): boolean {
   );
 }
 
+function assertNodeEnvironment() {
+  const inNode = typeof process !== 'undefined' && !!process.versions?.node;
+
+  if (!inNode) {
+    throw new Error('R2 上传工具仅在 Node.js 环境下可用，请在 Cloudflare Workers 中改用 R2 KV 绑定。');
+  }
+}
+
 /**
  * 创建 S3 客户端连接到 R2
  */
-function createR2Client() {
+async function getR2Client() {
   if (!isR2Configured()) {
     throw new Error('R2 未配置：请设置 R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME');
   }
 
-  return new S3Client({
-    region: 'auto',
-    endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-    credentials: {
-      accessKeyId: R2_ACCESS_KEY_ID!,
-      secretAccessKey: R2_SECRET_ACCESS_KEY!,
-    },
-  });
+  assertNodeEnvironment();
+
+  if (!awsSdkModule) {
+    awsSdkModule = await import('@aws-sdk/client-s3');
+  }
+
+  if (!s3ClientSingleton) {
+    const { S3Client } = awsSdkModule;
+    s3ClientSingleton = new S3Client({
+      region: 'auto',
+      endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+      credentials: {
+        accessKeyId: R2_ACCESS_KEY_ID!,
+        secretAccessKey: R2_SECRET_ACCESS_KEY!,
+      },
+    });
+  }
+
+  return s3ClientSingleton;
+}
+
+async function getPutObjectCommand() {
+  assertNodeEnvironment();
+
+  if (!awsSdkModule) {
+    awsSdkModule = await import('@aws-sdk/client-s3');
+  }
+
+  return awsSdkModule.PutObjectCommand;
+}
+
+function toBuffer(base64Data: string) {
+  assertNodeEnvironment();
+
+  return Buffer.from(base64Data, 'base64');
 }
 
 /**
@@ -64,12 +104,13 @@ export async function uploadToR2(
       };
     }
 
-    const s3Client = createR2Client();
+    const s3Client = await getR2Client();
+    const PutObjectCommand = await getPutObjectCommand();
     const timestamp = Date.now();
     const key = `images/${taskId}/${timestamp}_${index}.png`;
 
     // 将 base64 转换为 Buffer
-    const imageBuffer = Buffer.from(base64Data, 'base64');
+    const imageBuffer = toBuffer(base64Data);
 
     // 上传到 R2
     await s3Client.send(

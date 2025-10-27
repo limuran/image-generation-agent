@@ -1,8 +1,10 @@
 import { Agent } from '@mastra/core/agent';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { smartImageRouterTool } from '../tools/smart-image-router';
-import { Memory } from '@mastra/memory';
-import { LibSQLStore } from '@mastra/libsql';
+// Memory and LibSQLStore removed - incompatible with Cloudflare Workers
+// We use D1 database for task memory instead
+// import { Memory } from '@mastra/memory';
+// import { LibSQLStore } from '@mastra/libsql';
 
 // 使用 Google Gemini 作为主 LLM
 const googleProvider = createGoogleGenerativeAI({
@@ -78,12 +80,6 @@ export const imageGenerationAgent = new Agent({
   tools: {
     smartImageRouterTool,
   },
-  
-  memory: new Memory({
-    storage: new LibSQLStore({
-      url: 'file:../mastra.db',
-    }),
-  }),
 });
 
 export default imageGenerationAgent;

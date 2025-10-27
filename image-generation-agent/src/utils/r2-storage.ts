@@ -86,7 +86,7 @@ export async function uploadImageToR2(
 export async function uploadMultipleImages(
   bucket: R2Bucket,
   taskId: string,
-  images: Array<{ url: string; revised_prompt?: string }>,
+  images: Array<{ url?: string; base64?: string; revised_prompt?: string }>,
   publicUrl: string
 ): Promise<Array<{
   index: number;
@@ -100,19 +100,24 @@ export async function uploadMultipleImages(
   for (let i = 0; i < images.length; i++) {
     const image = images[i];
     
-    // 如果是 data URL，提取 base64 数据
-    let base64Data = '';
-    if (image.url.startsWith('data:')) {
-      const matches = image.url.match(/^data:image\/\w+;base64,(.+)$/);
-      if (matches && matches[1]) {
-        base64Data = matches[1];
+    // 优先使用显式传入的 base64 数据
+    let base64Data = image.base64 ?? '';
+
+    // 如果没有 base64 字段，再尝试从 data URL 中解析
+    if (!base64Data) {
+      const url = image.url ?? '';
+      if (url.startsWith('data:')) {
+        const matches = url.match(/^data:image\/\w+;base64,(.+)$/);
+        if (matches && matches[1]) {
+          base64Data = matches[1];
+        } else {
+          console.error(`❌ 无法解析 data URL: ${url.substring(0, 50)}...`);
+          continue;
+        }
       } else {
-        console.error(`❌ 无法解析 data URL: ${image.url.substring(0, 50)}...`);
+        console.error(`❌ 缺少 base64 数据，且 URL 不是 data: 格式，跳过第 ${i + 1} 张图片`);
         continue;
       }
-    } else {
-      console.error(`❌ 不支持的 URL 格式: ${image.url.substring(0, 50)}...`);
-      continue;
     }
     
     // 上传到 R2

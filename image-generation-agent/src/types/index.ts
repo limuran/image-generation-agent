@@ -2,20 +2,23 @@
  * 类型定义文件
  */
 
-import type { R2Bucket } from '@cloudflare/workers-types';
+import type { R2Bucket, D1Database } from '@cloudflare/workers-types';
 
 /**
  * Cloudflare Workers环境绑定
  */
 export interface Env {
+  // D1 数据库绑定
+  DB: D1Database;
+
   // R2存储桶绑定
   IMAGE_STORAGE: R2Bucket;
-  
+
   // API密钥
   GOOGLE_API_KEY: string;
   MOONSHOT_API_KEY: string;
   OPENAI_API_KEY: string;
-  
+
   // 环境变量
   NODE_ENV?: string;
   R2_PUBLIC_URL?: string;
